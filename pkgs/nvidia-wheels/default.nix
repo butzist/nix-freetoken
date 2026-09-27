@@ -82,10 +82,10 @@ in
   # closure notices the swap.
   nccl = mkNvidiaWheel {
     pname = "nccl";
-    version = "2.31.2";
+    version = "2.32.3";
     subdir = "nvidia/nccl";
-    url = "https://files.pythonhosted.org/packages/14/fb/94933e00bb3dcfdf66ea3456739c6a51d322353f7cc64fa1f5f660e695ac/nvidia_nccl_cu13-2.31.2-py3-none-manylinux_2_18_x86_64.whl";
-    hash = "sha256-C8rwMIhUy1X8w1r3LiyDFD87ceZaToZeLFhrHNzbWuA=";
+    url = "https://files.pythonhosted.org/packages/5b/29/6b277e63c92d91f9cb4d1a3a554e148983de39d54baa652bb52c798af78e/nvidia_nccl_cu13-2.32.3-py3-none-manylinux_2_27_x86_64.whl";
+    hash = "sha256-FFlyMICsiJ1zom7fo+BDg6eSirMayPDsQ7PqlUiwT/M=";
     description = "NVIDIA Collective Communications Library, from NVIDIA's PyPI wheel";
   };
 
