@@ -11,6 +11,7 @@
   gcc,
   binutils,
   ninja,
+  bash,
 
   # Pull in flashinfer's fused kernels. Turning this off leaves the runtime on
   # its pure-Triton fallbacks (`--attention-backend triton`), which is a much
@@ -43,6 +44,12 @@ let
   # `c++`, `nvcc` and `ld` by name as well. So all four have to be on PATH, or
   # the very first kernel launch dies with a bare
   # `FileNotFoundError: ... 'ninja'` from deep inside CUDA graph capture.
+  #
+  # `sh` belongs on that PATH for a less obvious reason. nixpkgs patches ninja
+  # to run every rule as `posix_spawnp("sh", "-c", ...)`, which searches PATH,
+  # where upstream hardcodes `/bin/sh` -- something a NixOS unit does not have.
+  # None of the entries above provide one, so ninja aborts before it even looks
+  # at the rule, with `ninja: fatal: posix_spawn: No such file or directory`.
   cudaHome = freetoken.cudaRuntimeHome;
 
   # nvcc force-includes `cuda_runtime.h` into every translation unit, and finds
@@ -97,6 +104,7 @@ stdenvNoCC.mkDerivation {
           gcc
           binutils
           ninja
+          bash
         ]
       } \
       --suffix LD_LIBRARY_PATH : ${addDriverRunpath.driverLink}/lib
