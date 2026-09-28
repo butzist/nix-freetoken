@@ -15,6 +15,13 @@ let
 
   defaultStateDir = "/var/lib/freetoken";
   defaultCacheDir = "/var/cache/freetoken";
+  # Not under CacheDirectory, and not persistent, on purpose. See the
+  # services.freetoken.jitCacheDir description.
+  defaultJitCacheDir = "/tmp/freetoken-jit";
+
+  # PrivateTmp hands the unit a fresh directory on every boot, so a host-level
+  # tmpfiles entry under /tmp would be both useless and left behind.
+  jitDirNeedsTmpfiles = !(cfg.jitCacheDir == "/tmp" || lib.hasPrefix "/tmp/" cfg.jitCacheDir);
 
   # `ft serve` takes plain GNU-style flags, so settings map straight onto them:
   # attribute names are the flag names without the leading dashes.
@@ -148,10 +155,33 @@ in
       type = lib.types.str;
       default = defaultCacheDir;
       description = ''
-        Writable cache for JIT-compiled kernels (Triton, torch C++ extensions,
-        flashinfer). Safe to delete; it is rebuilt on the next run, at the cost
-        of a slow first request. A non-default path needs
+        Writable cache for the artefacts that are not code: Hugging Face
+        assets, tokenizer files, `ft bench` results. Safe to delete.
+
+        Deliberately *not* where the JIT-compiled kernels go, because
+        systemd bind-mounts `CacheDirectory` with `noexec`; see
+        {option}`services.freetoken.jitCacheDir`. A non-default path needs
         {option}`services.freetoken.user` set.
+      '';
+    };
+
+    jitCacheDir = lib.mkOption {
+      type = lib.types.str;
+      default = defaultJitCacheDir;
+      description = ''
+        Where Triton, torch C++ extensions and flashinfer put the shared objects
+        they compile at runtime. Safe to delete; it is rebuilt on the next run.
+
+        It must not live under `CacheDirectory` or `StateDirectory`, because
+        systemd bind-mounts both with `noexec` and the dynamic loader then
+        refuses to map what the unit itself just compiled. The symptom is an
+        `EPERM` from `mmap` on the first request, not an out-of-memory error.
+
+        The default sits under the unit's `PrivateTmp`, which is not `noexec`.
+        The cost is a recompile per boot, which measures well under a second. A
+        persistent override only works if that path is not `noexec` either; a
+        directory systemd does not manage inherits the flags of the filesystem
+        it sits on, and it needs {option}`services.freetoken.user` set.
       '';
     };
 
@@ -233,8 +263,26 @@ in
           + "; use services.freetoken.model, .host and .port instead.";
       }
       {
-        assertion = staticUser || (cfg.stateDir == defaultStateDir && cfg.cacheDir == defaultCacheDir);
-        message = "services.freetoken.user must be set when stateDir or cacheDir is moved off its default, because a systemd DynamicUser cannot own a pre-existing directory.";
+        assertion =
+          staticUser
+          || (
+            cfg.stateDir == defaultStateDir
+            && cfg.cacheDir == defaultCacheDir
+            # A jitCacheDir under /tmp is created by the process itself, so it
+            # needs no pre-existing owner. A persistent one does.
+            && !jitDirNeedsTmpfiles
+          );
+        message = "services.freetoken.user must be set when stateDir, cacheDir or a persistent jitCacheDir is moved off its default, because a systemd DynamicUser cannot own a pre-existing directory.";
+      }
+      # systemd bind-mounts both of these noexec, so anything compiled into
+      # them is unloadable. Caught here rather than left to fail on the first
+      # request, where the message is an ImportError about a shared object.
+      {
+        assertion = builtins.all (d: !lib.hasPrefix "${d}/" cfg.jitCacheDir) [
+          cfg.cacheDir
+          cfg.stateDir
+        ];
+        message = "services.freetoken.jitCacheDir must not be inside services.freetoken.cacheDir or .stateDir: systemd mounts both noexec, so the dynamic loader cannot map the kernels the unit compiles and the server dies on the first request with 'failed to map segment from shared object'.";
       }
     ];
 
@@ -254,14 +302,26 @@ in
       groups.${cfg.group} = { };
     };
 
+    # jitCacheDir is skipped when it lives under /tmp: PrivateTmp hands the
+    # unit a fresh directory on every boot, so a host-level entry there would
+    # be both useless and left behind.
     systemd.tmpfiles.settings = lib.mkIf staticUser {
-      "10-freetoken" = lib.genAttrs [ cfg.stateDir cfg.cacheDir ] (_: {
-        d = {
-          user = cfg.user;
-          group = cfg.group;
-          mode = "0700";
-        };
-      });
+      "10-freetoken" =
+        lib.genAttrs
+          (
+            [
+              cfg.stateDir
+              cfg.cacheDir
+            ]
+            ++ lib.optional jitDirNeedsTmpfiles cfg.jitCacheDir
+          )
+          (_: {
+            d = {
+              user = cfg.user;
+              group = cfg.group;
+              mode = "0700";
+            };
+          });
     };
 
     systemd.services.freetoken = {
@@ -272,11 +332,14 @@ in
       environment = {
         HOME = cfg.stateDir;
         XDG_CACHE_HOME = cfg.cacheDir;
-        # Keep model downloads and JIT artefacts inside the dirs the unit can
-        # actually write to.
+        # Keep model downloads inside the dirs the unit can actually write to,
+        # but keep compiled code out of cacheDir and stateDir: systemd mounts
+        # both noexec. flashinfer derives its cache from $HOME rather than
+        # XDG_CACHE_HOME, so it needs the override to move off stateDir too.
         HF_HOME = "${cfg.stateDir}/huggingface";
-        TRITON_CACHE_DIR = "${cfg.cacheDir}/triton";
-        TORCH_EXTENSIONS_DIR = "${cfg.cacheDir}/torch_extensions";
+        TRITON_CACHE_DIR = "${cfg.jitCacheDir}/triton";
+        TORCH_EXTENSIONS_DIR = "${cfg.jitCacheDir}/torch_extensions";
+        FLASHINFER_WORKSPACE_BASE = cfg.jitCacheDir;
       }
       // cfg.environment;
 
@@ -333,6 +396,11 @@ in
         RestrictNamespaces = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
+        # FIXME: RestrictAddressFamilies is deliberately absent for now. gloo
+        # reaches for a socket family it was not granted and the backend dies,
+        # but which one it actually needs has not been identified, so the
+        # allowlist is not restored until that is known. This is an unverified
+        # loosening, not a considered configuration.
         SystemCallArchitectures = "native";
         SystemCallFilter = [
           "@system-service @resources"
