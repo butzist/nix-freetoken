@@ -12,6 +12,8 @@
   binutils,
   ninja,
   bash,
+  cmake,
+  gnumake,
 
   # Pull in flashinfer's fused kernels. Turning this off leaves the runtime on
   # its pure-Triton fallbacks (`--attention-backend triton`), which is a much
@@ -105,6 +107,8 @@ stdenvNoCC.mkDerivation {
           binutils
           ninja
           bash
+          cmake
+          gnumake
         ]
       } \
       --suffix LD_LIBRARY_PATH : ${addDriverRunpath.driverLink}/lib

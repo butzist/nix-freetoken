@@ -329,6 +329,17 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
+      # tvm-ffi picks its nvcc -gencode flags by shelling out to `nvidia-smi`
+      # (cpp/extension.py `_get_cuda_target`), and its only fallback maps A100
+      # and A10. Anything else raises "Could not detect CUDA compute_cap
+      # automatically" before a single kernel is built, so the driver's own
+      # nvidia-smi has to be reachable. The compiler toolchain comes from the
+      # package wrapper instead, since it is driver-independent; this one has
+      # to be the host's build, or it will not match the loaded kernel module.
+      path = lib.optional (config ? hardware.nvidia.package) (
+        lib.getOutput "bin" config.hardware.nvidia.package
+      );
+
       environment = {
         HOME = cfg.stateDir;
         XDG_CACHE_HOME = cfg.cacheDir;
