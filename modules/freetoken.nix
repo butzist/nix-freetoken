@@ -351,6 +351,10 @@ in
         TRITON_CACHE_DIR = "${cfg.jitCacheDir}/triton";
         TORCH_EXTENSIONS_DIR = "${cfg.jitCacheDir}/torch_extensions";
         FLASHINFER_WORKSPACE_BASE = cfg.jitCacheDir;
+        # tvm-ffi defaults to $HOME/.cache/tvm-ffi (cpp/extension.py), and HOME
+        # is stateDir, so its .so files land in the same place Triton's did and
+        # fail to load identically.
+        TVM_FFI_CACHE_DIR = "${cfg.jitCacheDir}/tvm_ffi";
       }
       // cfg.environment;
 
